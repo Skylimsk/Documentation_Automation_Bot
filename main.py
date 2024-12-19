@@ -187,31 +187,102 @@ class DocumentAutomation:
 
     def detect_keywords(self, text):
         """
-        Detect keywords from text with various formats, including single-symbol formats
+        Detect keywords from text with various formats.
+        Rules:
+        - Ignore email addresses
+        - Only detect digits when wrapped in symbols
+        - Brackets must have both opening and closing symbols
         """
         patterns = [
-            (r'\{\{(.+?)\}\}', '{{', '}}'),    # {{keyword}}
-            (r'\$\$(.+?)(?:\s|$)', '$$', None),  # $$keyword
-            (r'##(.+?)##', '##', '##'),        # ##keyword##
-            (r'\{(.+?)\}', '{', '}'),          # {keyword}
-            (r'\[\[(.+?)\]\]', '[[', ']]'),    # [[keyword]]
-            (r'\(\((.+?)(?:\s|$)', '((', None),    # ((keyword
-            (r'\|\|(.+?)(?:\s|$)', '||', None),    # ||keyword
-            (r'@@(.+?)(?:\s|$)', '@@', None)     # @@keyword
+            # Double symbol with closing pair
+            (r'\$\$(.+?)\$\$', '$$', '$$'),       # $$keyword$$ 
+            (r'##(.+?)##', '##', '##'),           # ##keyword##
+            (r'@@(.+?)@@', '@@', '@@'),           # @@keyword@@
+            (r'\|\|(.+?)\|\|', '||', '||'),       # ||keyword||
+            
+            # Single symbol with closing pair
+            (r'\$(.+?)\$', '$', '$'),             # $keyword$
+            (r'#(.+?)#', '#', '#'),               # #keyword#
+            (r'@(.+?)@', '@', '@'),               # @keyword@
+            (r'\|(.+?)\|', '|', '|'),             # |keyword|
+            
+            # Double symbol without closing
+            (r'\$\$(.+?)(?:\s|$)', '$$', None),   # $$keyword
+            (r'\|\|(.+?)(?:\s|$)', '||', None),   # ||keyword
+            (r'@@(.+?)(?:\s|$)', '@@', None),     # @@keyword
+            
+            # Single symbol without closing
+            (r'\$(.+?)(?:\s|$)', '$', None),      # $keyword
+            (r'\|(.+?)(?:\s|$)', '|', None),      # |keyword
+            (r'@(.+?)(?:\s|$)', '@', None),       # @keyword
+            
+            # Double brackets
+            (r'\{\{(.+?)\}\}', '{{', '}}'),       # {{keyword}}
+            (r'\[\[(.+?)\]\]', '[[', ']]'),       # [[keyword]]
+            (r'\(\((.+?)\)\)', '((', '))'),       # ((keyword))
+            
+            # Single brackets
+            (r'\{(.+?)\}', '{', '}'),             # {keyword}
+            (r'\[(.+?)\]', '[', ']'),             # [keyword]
+            (r'\((.+?)\)', '(', ')'),             # (keyword)
+            
+            # Mixed formats - brackets with symbols
+            (r'\{\$(.+?)\$\}', '{$', '$}'),       # {$keyword$}
+            (r'\{#(.+?)#\}', '{#', '#}'),         # {#keyword#}
+            (r'\[#(.+?)#\]', '[#', '#]'),         # [#keyword#]
+            (r'\[\$(.+?)\$\]', '[$', '$]'),       # [$keyword$]
+            (r'\(#(.+?)#\)', '(#', '#)'),         # (#keyword#)
+            (r'\(\$(.+?)\$\)', '($', '$)'),       # ($keyword$)
+            
+            # Double symbols with brackets
+            (r'\{\$\$(.+?)\$\$\}', '{$$', '$$}'), # {$$keyword$$}
+            (r'\[##(.+?)##\]', '[##', '##]'),     # [##keyword##]
+            (r'\(##(.+?)##\)', '(##', '##)'),     # (##keyword##)
         ]
+
+        # Email pattern for filtering
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        email_addresses = set(re.findall(email_pattern, text))
 
         keywords = []
         self.keyword_symbols = {}  # Store original symbols for each keyword
+
+        def is_valid_keyword(keyword, raw_match):
+            """
+            Validate if keyword meets the criteria:
+            - Not part of an email address
+            - Contains only digits when wrapped in symbols
+            """
+            # Remove extra whitespace
+            keyword = keyword.strip()
+            if not keyword:
+                return False
+                
+            # Check if the keyword is part of an email address
+            if any(keyword in email for email in email_addresses):
+                return False
+                
+            # Check if the raw match (including symbols) is an email address
+            if raw_match in email_addresses:
+                return False
+                
+            # Only accept digits
+            return keyword.isdigit()
 
         for pattern, start_symbol, end_symbol in patterns:
             matches = re.finditer(pattern, text)
             for match in matches:
                 # Get the keyword inside the symbols
                 keyword = match.group(1).strip()
-                if keyword not in self.keyword_symbols:
-                    self.keyword_symbols[keyword] = []
-                self.keyword_symbols[keyword].append(
-                    (start_symbol, end_symbol))
+                raw_match = match.group(0).strip()
+                
+                # Only add keyword if it meets the validation criteria
+                if is_valid_keyword(keyword, raw_match):
+                    if keyword not in self.keyword_symbols:
+                        self.keyword_symbols[keyword] = []
+                    # Only store if it's a complete bracket pair or a special symbol
+                    if (start_symbol and end_symbol) or start_symbol in ['$$', '||', '@@', '$', '|', '@']:
+                        self.keyword_symbols[keyword].append((start_symbol, end_symbol))
 
         return list(set(self.keyword_symbols.keys()))  # Return unique keywords
 
@@ -266,7 +337,7 @@ class DocumentAutomation:
         frame = ttk.Frame(self.root)
 
         title = ttk.Label(frame, text="Step 2: Keyword Matching Results",
-                          font=("Helvetica", 14, "bold"))
+                        font=("Helvetica", 14, "bold"))
         title.pack(pady=20)
 
         # Results section with scrollbar
@@ -300,14 +371,66 @@ class DocumentAutomation:
         nav_frame = ttk.Frame(frame)
         nav_frame.pack(fill="x", padx=20, pady=20)
         ttk.Button(nav_frame, text="← Back",
-                   command=self.show_upload_frame).pack(side="left")
+                command=self.show_upload_frame).pack(side="left")
         self.continue_button = ttk.Button(nav_frame,
-                                          text="Continue to Output Settings →",
-                                          command=self.show_output_frame,
-                                          state="disabled")
+                                        text="Continue to Output Settings →",
+                                        command=self.show_output_frame,
+                                        state="disabled")
         self.continue_button.pack(side="right")
 
         return frame
+
+    def toggle_all_keywords(self, select_all):
+        """Toggle all keyword checkboxes"""
+        for var in self.keyword_checkboxes.values():
+            var.set(select_all)
+        self.check_selected_keywords()
+
+    def auto_match_keywords(self, list_columns, template_keywords):
+        """Enhanced automatic matching of keywords with columns, especially for numeric patterns"""
+        matches = {}
+        
+        for keyword in template_keywords:
+            # Extract numbers from keyword
+            keyword_numbers = ''.join(filter(str.isdigit, keyword))
+            
+            # Try different matching strategies
+            for column in list_columns:
+                column_numbers = ''.join(filter(str.isdigit, column))
+                
+                # Strategy 1: Exact number match
+                if keyword_numbers and column_numbers and keyword_numbers == column_numbers:
+                    matches[keyword] = column
+                    break
+                    
+                # Strategy 2: Exact string match (case insensitive)
+                elif column.lower() == keyword.lower():
+                    matches[keyword] = column
+                    break
+                    
+                # Strategy 3: Number at the end match
+                elif keyword_numbers and column_numbers and keyword_numbers == column_numbers[-len(keyword_numbers):]:
+                    matches[keyword] = column
+                    break
+                    
+                # Strategy 4: Partial number match
+                elif keyword_numbers and column_numbers and (keyword_numbers in column_numbers or column_numbers in keyword_numbers):
+                    matches[keyword] = column
+                    break
+
+        return matches
+
+    def clean_string(self, text):
+        """Clean string for better matching"""
+        # Convert to lowercase
+        text = text.lower()
+        # Remove common symbols and separators
+        text = text.replace('_', '').replace('-', '').replace(' ', '')
+        # Remove common prefixes/suffixes
+        prefixes = ['$$', '##', '{{', '}}', '[[', ']]', '(', ')', '{', '}', '|']
+        for prefix in prefixes:
+            text = text.replace(prefix, '')
+        return text
 
     def create_output_frame(self):
         """Create the third frame for output settings"""
@@ -375,7 +498,8 @@ class DocumentAutomation:
     def find_name_column(self, columns):
         """Find the name column using case-insensitive comparison"""
         # Check for various possible name column formats
-        name_variants = ['name', 'names', 'full name', 'fullname', '$$name', 'NAME', '$$NAME']
+        name_variants = ['name', 'names', 'full name',
+                         'fullname', '$$name', 'NAME', '$$NAME']
         for column in columns:
             # Convert to lowercase for comparison
             col_lower = column.lower()
@@ -383,7 +507,7 @@ class DocumentAutomation:
             if any(variant.lower() in col_lower for variant in name_variants):
                 return column
         return None
-    
+
     def find_folder_column(self, columns):
         """Find the folder column regardless of case"""
         folder_variants = ['folder', 'folder_name', 'foldername']
@@ -411,8 +535,7 @@ class DocumentAutomation:
     def check_and_proceed(self):
         """Validate files and proceed to keyword matching step"""
         if not self.template_path.get() or not self.list_path.get():
-            messagebox.showerror(
-                "Error", "Please select both template and list files")
+            messagebox.showerror("Error", "Please select both template and list files")
             return
 
         # Clear previous results
@@ -426,30 +549,67 @@ class DocumentAutomation:
         list_columns = self.detect_list_columns()
 
         # Auto-match keywords
-        auto_matches = self.auto_match_keywords(
-            list_columns, template_keywords)
+        auto_matches = self.auto_match_keywords(list_columns, template_keywords)
 
-        # Create results table headers
-        headers = ["Select", "Keyword",
-                   "Format(s)", "Status", "Match", "Format"]
+        # Create header container frames
+        headers = ["Select All", "Keyword", "Format(s)", "Status", "Match", "Format"]
+        header_frames = []
+        
         for col, header in enumerate(headers):
-            ttk.Label(self.results_frame, text=header, font=("Helvetica", 10, "bold")).grid(
-                row=0, column=col, padx=5, pady=5)
+            # Create a frame for each header to contain both checkbox and label if needed
+            header_frame = ttk.Frame(self.results_frame)
+            header_frame.grid(row=0, column=col, padx=5, pady=5)
+            header_frames.append(header_frame)
+            
+            if col == 0:  # Special handling for "Select All" header
+                # Add checkbox
+                select_all_var = tk.BooleanVar(value=False)
+                select_all_chk = ttk.Checkbutton(
+                    header_frame,
+                    variable=select_all_var,
+                    command=lambda: self.toggle_all_keywords(select_all_var.get())
+                )
+                select_all_chk.pack(side="left")
+                
+                # Add label
+                ttk.Label(
+                    header_frame,
+                    text="Select All",
+                    font=("Helvetica", 10, "bold")
+                ).pack(side="left")
+            else:
+                # Regular headers
+                ttk.Label(
+                    header_frame,
+                    text=header,
+                    font=("Helvetica", 10, "bold")
+                ).pack()
 
         self.keyword_checkboxes.clear()
         self.keywords = []
+        self.status_labels = {}  # Store status labels for updating
+
+        def is_exact_match(keyword, column):
+            """Check if keyword exactly matches the column name"""
+            # Remove symbols and compare
+            keyword_clean = self.clean_string(keyword)
+            column_clean = self.clean_string(column)
+            return keyword_clean == column_clean
 
         for i, keyword in enumerate(template_keywords, 1):
-            # Checkbox (pre-selected if auto-matched)
-            var = tk.BooleanVar(value=keyword in auto_matches)
+            # Check for exact match in auto_matches
+            is_matched = False
+            if keyword in auto_matches:
+                is_matched = is_exact_match(keyword, auto_matches[keyword])
+
+            # Checkbox (only pre-selected if exact match)
+            var = tk.BooleanVar(value=is_matched)
             self.keyword_checkboxes[keyword] = var
-            chk = ttk.Checkbutton(
-                self.results_frame, variable=var, command=self.check_selected_keywords)
+            chk = ttk.Checkbutton(self.results_frame, variable=var, command=self.check_selected_keywords)
             chk.grid(row=i, column=0, padx=5, pady=2)
 
             # Keyword
-            ttk.Label(self.results_frame, text=keyword).grid(
-                row=i, column=1, padx=5, pady=2)
+            ttk.Label(self.results_frame, text=keyword).grid(row=i, column=1, padx=5, pady=2)
 
             # Format column
             formats = []
@@ -458,22 +618,23 @@ class DocumentAutomation:
                     formats.append(f"{start_symbol}...{end_symbol}")
                 else:
                     formats.append(f"{start_symbol}")
-            ttk.Label(self.results_frame, text=", ".join(formats)
-                      ).grid(row=i, column=2, padx=5, pady=2)
+            ttk.Label(self.results_frame, text=", ".join(formats)).grid(row=i, column=2, padx=5, pady=2)
 
             # Status and Match
-            combo = ttk.Combobox(
-                self.results_frame, values=list_columns, state="readonly", width=30)
-            if keyword in auto_matches:
-                status_label = ttk.Label(
-                    self.results_frame, text="✓ Auto-matched", foreground="green")
-                combo.set(auto_matches[keyword])
-            else:
-                status_label = ttk.Label(
-                    self.results_frame, text="× Not matched", foreground="orange")
-
+            status_label = ttk.Label(self.results_frame, text="× Not matched", foreground="orange")
             status_label.grid(row=i, column=3, padx=5, pady=2)
+            self.status_labels[keyword] = status_label
+
+            combo = ttk.Combobox(self.results_frame, values=list_columns, state="readonly", width=30)
             combo.grid(row=i, column=4, padx=5, pady=2)
+            
+            # Set auto-matched value if exists
+            if keyword in auto_matches:
+                combo.set(auto_matches[keyword])
+                self.update_status(keyword, auto_matches[keyword])
+
+            # Bind the combobox selection event
+            combo.bind('<<ComboboxSelected>>', lambda e, k=keyword, c=combo: self.check_match(k, c))
 
             # Format button
             format_button = ttk.Button(
@@ -484,8 +645,7 @@ class DocumentAutomation:
             format_button.grid(row=i, column=5, padx=5, pady=2)
 
             # Format preview label
-            format_preview = ttk.Label(
-                self.results_frame, text=self.update_format_preview(keyword))
+            format_preview = ttk.Label(self.results_frame, text=self.update_format_preview(keyword))
             format_preview.grid(row=i, column=6, padx=5, pady=2)
 
             self.keywords.append((keyword, combo))
@@ -493,40 +653,186 @@ class DocumentAutomation:
         self.check_selected_keywords()
         self.show_keyword_frame()
 
+    def check_match(self, keyword, combo):
+        """Check if selected column matches the keyword and update status and checkbox"""
+        selected_column = combo.get()
+        if selected_column:
+            keyword_clean = self.clean_string(keyword)
+            column_clean = self.clean_string(selected_column)
+            
+            # Check for matches
+            is_match = False
+            match_type = ""
+
+            # Exact match (case-insensitive)
+            if keyword_clean == column_clean:
+                is_match = True
+                match_type = "Exact match"
+                # Auto-check the checkbox for exact matches
+                self.keyword_checkboxes[keyword].set(True)
+            
+            # Number match
+            elif self.extract_numbers(keyword_clean) == self.extract_numbers(column_clean):
+                is_match = True
+                match_type = "Number match"
+            
+            # Partial text match
+            elif keyword_clean in column_clean or column_clean in keyword_clean:
+                is_match = True
+                match_type = "Text match"
+
+            # Update status label
+            if is_match:
+                self.status_labels[keyword].config(
+                    text=f"✓ {match_type}",
+                    foreground="green"
+                )
+            else:
+                self.status_labels[keyword].config(
+                    text="× Not matched",
+                    foreground="orange"
+                )
+                
+            # After status update, check if we need to update the "Select All" state
+            self.check_selected_keywords()
+    
+    def extract_numbers(self, text):
+        """Extract only numbers from text"""
+        return ''.join(filter(str.isdigit, text))
+
+    def update_status(self, keyword, column):
+        """Update the status label based on match detection"""
+        keyword_clean = self.clean_string(keyword)
+        column_clean = self.clean_string(column)
+
+        # Check for matches
+        is_match = False
+        match_type = ""
+
+        # Exact match (case-insensitive)
+        if keyword_clean == column_clean:
+            is_match = True
+            match_type = "Exact match"
+        
+        # Number match
+        elif self.extract_numbers(keyword_clean) == self.extract_numbers(column_clean):
+            is_match = True
+            match_type = "Number match"
+        
+        # Partial text match
+        elif keyword_clean in column_clean or column_clean in keyword_clean:
+            is_match = True
+            match_type = "Text match"
+
+        # Update status label
+        if is_match:
+            self.status_labels[keyword].config(
+                text=f"✓ {match_type}",
+                foreground="green"
+            )
+        else:
+            self.status_labels[keyword].config(
+                text="× Not matched",
+                foreground="orange"
+            )
+
+    def clean_string(self, text):
+        """Clean string for matching by removing symbols and converting to lowercase"""
+        # Convert to lowercase
+        text = text.lower().strip()
+        # Remove common symbols and separators
+        text = text.replace('_', '').replace('-', '').replace(' ', '')
+        # Remove common prefixes/suffixes
+        prefixes = ['$$', '##', '{{', '}}', '[[', ']]', '(', ')', '{', '}', '|']
+        for prefix in prefixes:
+            text = text.replace(prefix, '')
+        return text
+
     def check_selected_keywords(self):
-        """Update summary and continue button based on selected keywords"""
-        selected_count = sum(
-            1 for var in self.keyword_checkboxes.values() if var.get())
+        """Update summary and continue button based on selected keywords and their matches"""
+        # Count selected keywords
+        selected_count = 0
+        unmatched_keywords = []
+        
+        # Check each selected keyword for a match
+        for keyword, var in self.keyword_checkboxes.items():
+            if var.get():  # If checkbox is selected
+                selected_count += 1
+                # Find corresponding combobox
+                matched = False
+                for kw, combo in self.keywords:
+                    if kw == keyword:
+                        if not combo.get():  # If no match selected
+                            unmatched_keywords.append(keyword)
+                        break
+
         total_keywords = len(self.keyword_checkboxes)
 
         # Update summary
         for widget in self.summary_frame.winfo_children():
             widget.destroy()
 
-        summary_text = f"Selected {selected_count} out of {
-            total_keywords} keywords"
+        summary_text = f"Selected {selected_count} out of {total_keywords} keywords"
         ttk.Label(self.summary_frame, text=summary_text).pack()
 
-        # Enable/disable continue button based on selection
-        if selected_count > 0:
+        # Enable/disable continue button based on selection and matches
+        if selected_count > 0 and not unmatched_keywords:
             self.continue_button.config(state="normal")
             message = "You can proceed to output settings."
-            ttk.Label(self.summary_frame, text=message,
-                      foreground="green").pack()
+            ttk.Label(self.summary_frame, text=message, foreground="green").pack()
         else:
             self.continue_button.config(state="disabled")
-            message = "Please select at least one keyword to proceed."
-            ttk.Label(self.summary_frame, text=message,
-                      foreground="orange").pack()
+            if selected_count == 0:
+                message = "Please select at least one keyword to proceed."
+            else:
+                message = f"Please select matches for: {', '.join(unmatched_keywords)}"
+            ttk.Label(self.summary_frame, text=message, foreground="orange").pack()
 
     def detect_template_keywords(self):
-        """Detect keywords from template document"""
+        """Detect keywords from template document, including all possible text locations"""
         if not self.template_path.get():
             return []
 
         try:
             doc = Document(self.template_path.get())
-            text = '\n'.join(paragraph.text for paragraph in doc.paragraphs)
+            all_text = []
+
+            # Process regular paragraphs
+            for paragraph in doc.paragraphs:
+                all_text.append(paragraph.text)
+
+            # Process tables and nested tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        # Handle paragraphs within cells
+                        for paragraph in cell.paragraphs:
+                            if paragraph.text.strip():
+                                all_text.append(paragraph.text)
+
+                        # Handle nested tables
+                        for nested_table in cell.tables:
+                            for nested_row in nested_table.rows:
+                                for nested_cell in nested_row.cells:
+                                    for nested_para in nested_cell.paragraphs:
+                                        if nested_para.text.strip():
+                                            all_text.append(nested_para.text)
+
+            # Process shapes and text boxes
+            for shape in doc.inline_shapes:
+                if hasattr(shape, 'text_frame'):
+                    for paragraph in shape.text_frame.paragraphs:
+                        if paragraph.text.strip():
+                            all_text.append(paragraph.text)
+
+            # Process floating shapes and text boxes (in document._element.body)
+            for shape in doc._element.findall('.//w:txbxContent/w:p', doc._element.nsmap):
+                text = shape.xpath('string()')
+                if text.strip():
+                    all_text.append(text)
+
+            # Combine all text and detect keywords
+            text = '\n'.join(all_text)
             keywords = self.detect_keywords(text)
 
             # Update preview
@@ -578,21 +884,24 @@ class DocumentAutomation:
             return
 
         if not any(format_var.get() for format_var in self.output_formats.values()):
-            messagebox.showerror("Error", "Please select at least one output format")
+            messagebox.showerror(
+                "Error", "Please select at least one output format")
             return
 
         try:
             # Read data
-            df = pd.read_excel(self.list_path.get()) if self.list_path.get().endswith('.xlsx') else pd.read_csv(self.list_path.get())
-            
+            df = pd.read_excel(self.list_path.get()) if self.list_path.get().endswith(
+                '.xlsx') else pd.read_csv(self.list_path.get())
+
             # Find name and folder columns
             name_column = self.find_name_column(df.columns)
             folder_column = self.find_folder_column(df.columns)
-            
+
             if not name_column:
-                messagebox.showerror("Error", "Name column not found in list file. Please ensure you have a column with 'name' in it (case insensitive).")
+                messagebox.showerror(
+                    "Error", "Name column not found in list file. Please ensure you have a column with 'name' in it (case insensitive).")
                 return
-                
+
             # Create mapping from keywords to column names
             mapping = {}
             for keyword, var in self.keyword_checkboxes.items():
@@ -601,63 +910,103 @@ class DocumentAutomation:
                         if kw == keyword and combo.get():
                             mapping[keyword] = combo.get()
 
+            # Create progress window
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("Processing Files")
+            progress_window.geometry("400x150")
+            progress_window.transient(self.root)
+
+            # Center progress window
+            progress_window.geometry("+%d+%d" % (
+                self.root.winfo_x() + self.root.winfo_width()/2 - 200,
+                self.root.winfo_y() + self.root.winfo_height()/2 - 75))
+
+            # Add progress label and bar
+            progress_label = ttk.Label(progress_window, text="Processing files...")
+            progress_label.pack(pady=10)
+            progress_bar = ttk.Progressbar(progress_window, length=300, mode='determinate')
+            progress_bar.pack(pady=10)
+            file_label = ttk.Label(progress_window, text="")
+            file_label.pack(pady=10)
+
             # Process each row
             total_files = len(df)
-            for index, row in df.iterrows():
-                # Update progress
-                self.root.title(f"Processing file {index + 1} of {total_files}...")
+            successful_files = 0
+            failed_files = []
+            progress_bar['maximum'] = total_files
 
+            for index, row in df.iterrows():
                 try:
+                    # Update progress
+                    progress_bar['value'] = index + 1
+                    file_label.config(text=f"Processing file {index + 1} of {total_files}")
+                    progress_window.update()
+
                     # Create new document from template
                     doc = Document(self.template_path.get())
 
-                    # Replace keywords in paragraphs with formatting
+                    # Process regular paragraphs
                     for paragraph in doc.paragraphs:
-                        for keyword in mapping:
-                            if keyword in self.keyword_symbols:
-                                for start_symbol, end_symbol in self.keyword_symbols[keyword]:
-                                    if end_symbol:
-                                        original = start_symbol + keyword + end_symbol
-                                    else:
-                                        original = start_symbol + keyword
+                        self._replace_keywords_in_paragraph(paragraph, row, mapping)
 
-                                    if original in paragraph.text:
-                                        new_value = str(row[mapping[keyword]])
+                    # Process tables and nested tables
+                    for table in doc.tables:
+                        for table_row in table.rows:
+                            for cell in table_row.cells:
+                                # Process paragraphs within cells
+                                for paragraph in cell.paragraphs:
+                                    self._replace_keywords_in_paragraph(paragraph, row, mapping)
 
-                                        # Find the run containing the keyword and apply formatting
-                                        for run in paragraph.runs:
-                                            if original in run.text:
-                                                # Apply formatting if specified
-                                                if keyword in self.keyword_formats:
-                                                    format_settings = self.keyword_formats[keyword]
-                                                    run.font.name = format_settings['font_name']
-                                                    run.font.size = Pt(format_settings['font_size'])
-                                                    run.font.color.rgb = RGBColor.from_string(format_settings['font_color'][1:])
-                                                    run.font.bold = format_settings['bold']
-                                                    run.font.italic = format_settings['italic']
-                                                    run.font.underline = format_settings['underline']
+                                # Process nested tables
+                                for nested_table in cell.tables:
+                                    for nested_row in nested_table.rows:
+                                        for nested_cell in nested_row.cells:
+                                            for nested_para in nested_cell.paragraphs:
+                                                self._replace_keywords_in_paragraph(nested_para, row, mapping)
 
-                                                # Replace text
-                                                run.text = run.text.replace(original, new_value)
+                    # Process shapes and text boxes
+                    for shape in doc.inline_shapes:
+                        if hasattr(shape, 'text_frame'):
+                            for paragraph in shape.text_frame.paragraphs:
+                                self._replace_keywords_in_paragraph(paragraph, row, mapping)
+
+                    # Process floating shapes and text boxes
+                    try:
+                        for shape in doc._element.findall('.//w:txbxContent/w:p', doc._element.nsmap):
+                            text = shape.xpath('string()')
+                            if text.strip():
+                                # Create a temporary paragraph object for processing
+                                temp_paragraph = doc.add_paragraph()
+                                temp_paragraph.text = text
+                                self._replace_keywords_in_paragraph(temp_paragraph, row, mapping)
+                                # Update the shape text with the processed text
+                                shape.text = temp_paragraph.text
+                                # Remove the temporary paragraph
+                                temp_paragraph._element.getparent().remove(temp_paragraph._element)
+                    except Exception as shape_error:
+                        print(f"Warning: Error processing shapes in document: {str(shape_error)}")
 
                     # Get output name from name column - handle empty or invalid values
                     output_name = str(row[name_column]).strip()
                     if not output_name:
                         output_name = f"document_{index + 1}"
                     # Clean the output name
-                    output_name = "".join(x for x in output_name if x.isalnum() or x in (' ', '-', '_'))
+                    output_name = "".join(
+                        x for x in output_name if x.isalnum() or x in (' ', '-', '_'))
                     if not output_name:  # If after cleaning the name is empty
                         output_name = f"document_{index + 1}"
 
                     # Get custom folder name or use default
-                    folder_name = str(row[folder_column]) if folder_column and pd.notna(row[folder_column]) else "default"
-                    folder_name = "".join(x for x in folder_name if x.isalnum() or x in (' ', '-', '_'))
+                    folder_name = str(row[folder_column]) if folder_column and pd.notna(
+                        row[folder_column]) else "default"
+                    folder_name = "".join(
+                        x for x in folder_name if x.isalnum() or x in (' ', '-', '_'))
                     if not folder_name:  # If after cleaning the folder name is empty
                         folder_name = "default"
 
                     # Create base directory for this record
                     record_base_dir = Path(self.save_location.get()) / folder_name
-                    
+
                     # Create format-specific subdirectories
                     output_dirs = {}
                     for format_type, format_var in self.output_formats.items():
@@ -675,7 +1024,7 @@ class DocumentAutomation:
                         pdf_dir = output_dirs["pdf"]
                         temp_docx = pdf_dir / f"{output_name}.docx"
                         pdf_path = pdf_dir / f"{output_name}.pdf"
-                        
+
                         # Save temporary docx for PDF conversion
                         doc.save(temp_docx)
                         try:
@@ -683,28 +1032,40 @@ class DocumentAutomation:
                             # Remove temporary docx file after successful PDF conversion
                             temp_docx.unlink()
                         except Exception as pdf_error:
-                            messagebox.showwarning(
-                                "PDF Conversion Warning", 
-                                f"Error converting to PDF for {output_name}:\n{str(pdf_error)}\n\n"
-                                "The DOCX file has been saved and you can try converting it manually."
-                            )
+                            failed_files.append(
+                                (output_name, f"PDF conversion error: {str(pdf_error)}"))
+                            continue
+
+                    successful_files += 1
 
                 except Exception as row_error:
-                    messagebox.showwarning(
-                        "Processing Warning", 
-                        f"Error processing row {index + 1}:\n{str(row_error)}\n\nContinuing with next row..."
-                    )
+                    failed_files.append((output_name, str(row_error)))
                     continue
 
-            # Reset window title
-            self.root.title("Document Automation Tool")
+                # Update progress window
+                progress_window.update()
 
-            # Show success message with option to open folder
+            # Close progress window
+            progress_window.destroy()
+
+            # Show completion message
+            completion_message = f"Processing complete!\n\n"
+            completion_message += f"Successfully processed: {successful_files} files\n"
+
+            if failed_files:
+                completion_message += f"\nFailed to process {len(failed_files)} files:\n"
+                # Show first 5 failures
+                for failed_file, error in failed_files[:5]:
+                    completion_message += f"- {failed_file}: {error}\n"
+                if len(failed_files) > 5:
+                    completion_message += f"(and {len(failed_files) - 5} more...)\n"
+
+            completion_message += f"\nFiles have been saved to:\n{self.save_location.get()}" \
+                                f"\n\nWould you like to open the output folder?"
+
             result = messagebox.askquestion(
-                "Success",
-                f"Files have been processed and saved to:\n{self.save_location.get()}\n\n"
-                f"Total files processed: {total_files}\n\n"
-                "Would you like to open the output folder?",
+                "Processing Complete",
+                completion_message,
                 icon='info'
             )
 
@@ -724,13 +1085,44 @@ class DocumentAutomation:
             self.show_upload_frame()
 
         except Exception as e:
-            self.root.title("Document Automation Tool")
             messagebox.showerror(
-                "Error", 
+                "Error",
                 f"An error occurred during processing:\n{str(e)}\n\n"
                 "Please check your input files and try again."
             )
-        return
+            return
+
+    def _replace_keywords_in_paragraph(self, paragraph, row, mapping):
+        """Helper method to replace keywords in a paragraph with proper formatting"""
+        for keyword in mapping:
+            if keyword in self.keyword_symbols:
+                for start_symbol, end_symbol in self.keyword_symbols[keyword]:
+                    if end_symbol:
+                        original = start_symbol + keyword + end_symbol
+                    else:
+                        original = start_symbol + keyword
+
+                    if original in paragraph.text:
+                        new_value = str(row[mapping[keyword]])
+
+                        # Find the run containing the keyword and apply formatting
+                        for run in paragraph.runs:
+                            if original in run.text:
+                                # Apply formatting if specified
+                                if keyword in self.keyword_formats:
+                                    format_settings = self.keyword_formats[keyword]
+                                    run.font.name = format_settings['font_name']
+                                    run.font.size = Pt(
+                                        format_settings['font_size'])
+                                    run.font.color.rgb = RGBColor.from_string(
+                                        format_settings['font_color'][1:])
+                                    run.font.bold = format_settings['bold']
+                                    run.font.italic = format_settings['italic']
+                                    run.font.underline = format_settings['underline']
+
+                                # Replace text
+                                run.text = run.text.replace(
+                                    original, new_value)
 
     def browse_template(self):
         """Open file dialog for template selection"""
